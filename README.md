@@ -8,16 +8,35 @@
 npm install
 ```
 
+## 环境配置
+
+1. 复制 `.env.example` 到 `.env`：
+```bash
+cp .env.example .env
+```
+
+2. 编辑 `.env` 文件，配置需要监控的代币：
+```env
+# Solana RPC地址
+RPC_URL=https://api.mainnet-beta.solana.com
+
+# 需要监控的代币 (用逗号分隔)
+MONITOR_TOKENS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v,Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+
+# 监控所有代币
+MONITOR_ALL_TOKENS=false
+```
+
 ## 使用方法
 
-### 1. 监控所有代币转账
+### 1. 使用环境变量配置监控
 ```bash
 npm run monitor
 ```
 
-### 2. 监控特定代币
+### 2. 监控特定代币（覆盖环境变量）
 ```bash
-npm run monitor [TOKEN_MINT_ADDRESS]
+npm run monitor EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
 ### 3. 在代码中使用

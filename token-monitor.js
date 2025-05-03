@@ -1,17 +1,19 @@
-const { Connection, PublicKey, clusterApiUrl } = require('@solana/web3.js');
+require('dotenv').config();
+const { Connection, clusterApiUrl } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 
 class SolanaTokenMonitor {
-    constructor(rpcUrl = clusterApiUrl('mainnet-beta')) {
+    constructor(rpcUrl = process.env.RPC_URL || clusterApiUrl('mainnet-beta')) {
         this.connection = new Connection(rpcUrl, 'confirmed');
         this.isMonitoring = false;
+        this.logLevel = process.env.LOG_LEVEL || 'info';
     }
 
     async monitorTokenTransfers(tokenMint = null, options = {}) {
         const {
             onTransfer = this.defaultTransferHandler,
-            maxRetries = 5,
-            retryDelay = 1000
+            maxRetries = parseInt(process.env.MAX_RETRIES) || 5,
+            retryDelay = parseInt(process.env.RETRY_DELAY) || 1000
         } = options;
 
         console.log(`开始监控代币转账事件${tokenMint ? ` (代币: ${tokenMint})` : ''}`);
@@ -21,7 +23,7 @@ class SolanaTokenMonitor {
         
         while (this.isMonitoring && retries < maxRetries) {
             try {
-                await this.connection.onLogs(
+                this.connection.onLogs(
                     TOKEN_PROGRAM_ID,
                     async (logs, context) => {
                         try {
@@ -99,7 +101,7 @@ class SolanaTokenMonitor {
             }
         });
 
-        for (const [key, { pre, post }] of balanceMap) {
+        for (const [, { pre, post }] of balanceMap) {
             const mint = pre?.mint || post?.mint;
             
             if (targetTokenMint && mint !== targetTokenMint) {
@@ -131,7 +133,7 @@ class SolanaTokenMonitor {
         return transfers;
     }
 
-    defaultTransferHandler(transfer, context) {
+    defaultTransferHandler(transfer) {
         const timestamp = transfer.blockTime ? 
             new Date(transfer.blockTime * 1000).toLocaleString() : 
             '未知时间';
@@ -179,12 +181,30 @@ if (require.main === module) {
     const args = process.argv.slice(2);
     const tokenMint = args[0];
     
+    // 从环境变量获取配置
+    const monitorAllTokens = process.env.MONITOR_ALL_TOKENS === 'true';
+    const monitorTokens = process.env.MONITOR_TOKENS ? 
+        process.env.MONITOR_TOKENS.split(',').map(token => token.trim()) : 
+        [];
+    
     if (tokenMint) {
         console.log(`监控指定代币: ${tokenMint}`);
         monitor.monitorSpecificToken(tokenMint);
-    } else {
+    } else if (monitorAllTokens) {
         console.log('监控所有代币转账');
         monitor.monitorAllTokens();
+    } else if (monitorTokens.length > 0) {
+        console.log(`监控配置的代币: ${monitorTokens.join(', ')}`);
+        // 为每个代币启动监控
+        monitorTokens.forEach(token => {
+            monitor.monitorSpecificToken(token, (transfer) => {
+                console.log(`代币 ${token} 检测到转账:`);
+                monitor.defaultTransferHandler(transfer);
+            });
+        });
+    } else {
+        console.log('请在.env文件中配置MONITOR_TOKENS或设置MONITOR_ALL_TOKENS=true');
+        process.exit(1);
     }
     
     process.on('SIGINT', () => {
