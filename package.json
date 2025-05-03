@@ -1,0 +1,24 @@
+{
+  "name": "solana-token-monitor",
+  "version": "1.0.0",
+  "description": "Solana代币转账监控脚本",
+  "main": "token-monitor.js",
+  "scripts": {
+    "start": "node token-monitor.js",
+    "monitor": "node token-monitor.js",
+    "test": "node test-monitor.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "@solana/spl-token": "^0.3.9"
+  },
+  "keywords": [
+    "solana",
+    "token",
+    "monitor",
+    "blockchain",
+    "transfer"
+  ],
+  "author": "",
+  "license": "MIT"
+}
