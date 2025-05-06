@@ -23,6 +23,9 @@ RPC_URL=https://api.mainnet-beta.solana.com
 # 需要监控的代币 (用逗号分隔)
 MONITOR_TOKENS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v,Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
 
+# 需要监控的钱包地址 (用逗号分隔)
+MONITOR_ADDRESSES=7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+
 # 监控所有代币
 MONITOR_ALL_TOKENS=false
 ```
@@ -39,7 +42,12 @@ npm run monitor
 npm run monitor EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
-### 3. 在代码中使用
+### 3. 监控特定地址的所有交易
+```bash
+npm run monitor --address 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+```
+
+### 4. 在代码中使用
 
 ```javascript
 const SolanaTokenMonitor = require('./token-monitor');
@@ -57,19 +65,25 @@ monitor.monitorSpecificToken('TOKEN_MINT_ADDRESS', customHandler);
 
 // 或监控所有代币
 monitor.monitorAllTokens(customHandler);
+
+// 监控特定地址的所有交易
+monitor.monitorAddressTransactions('WALLET_ADDRESS', customTransactionHandler);
 ```
 
 ## 功能特性
 
 - ✅ 实时监控代币转账事件
+- ✅ 监控特定钱包地址的所有交易
 - ✅ 支持监控特定代币或所有代币
 - ✅ 自动重连机制
 - ✅ 详细的转账信息解析
+- ✅ 完整的交易信息（手续费、指令、状态等）
 - ✅ 可自定义事件处理函数
 - ✅ 支持主网、测试网和开发网
 
 ## 监控信息包括
 
+### 代币转账监控
 - 交易签名
 - 代币地址
 - 账户地址
@@ -77,6 +91,14 @@ monitor.monitorAllTokens(customHandler);
 - 转账类型（发送/接收）
 - 时间戳
 - 区块高度
+
+### 地址交易监控
+- 交易签名和状态
+- 交易手续费
+- 指令数量和详情
+- 代币转账记录
+- 交易时间和区块
+- 程序调用信息
 
 ## 常见代币地址
 
@@ -93,6 +115,7 @@ SRM=SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt (Serum)
 
 ## 输出示例
 
+### 代币转账事件
 ```
 === 代币转账事件 ===
 时间: 2024-01-15 14:30:25
@@ -103,6 +126,23 @@ SRM=SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt (Serum)
 交易签名: 5J8...abc123
 区块: 123456789
 ==================
+```
+
+### 地址交易事件
+```
+=== 地址交易事件 ===
+时间: 2024-01-15 14:35:12
+地址: 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+交易签名: 3K9...def456
+状态: success
+手续费: 0.000005 SOL
+指令数量: 2
+代币转账: 1
+区块: 123456790
+==================
+
+代币转账详情:
+1. 发送 50.000000 (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
 ```
 
 ## 故障排除
