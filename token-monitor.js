@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Connection, clusterApiUrl } = require('@solana/web3.js');
+const { Connection, clusterApiUrl, PublicKey } = require('@solana/web3.js');
 const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 
 class SolanaTokenMonitor {
@@ -165,6 +165,183 @@ class SolanaTokenMonitor {
         });
     }
 
+    async monitorAddressTransactions(address, options = {}) {
+        const {
+            onTransaction = this.defaultTransactionHandler,
+            maxRetries = parseInt(process.env.MAX_RETRIES) || 5,
+            retryDelay = parseInt(process.env.RETRY_DELAY) || 1000
+        } = options;
+
+        console.log(`开始监控地址交易: ${address}`);
+        this.isMonitoring = true;
+
+        let retries = 0;
+        
+        try {
+            const publicKey = new PublicKey(address);
+            
+            while (this.isMonitoring && retries < maxRetries) {
+                try {
+                    this.connection.onLogs(
+                        publicKey,
+                        async (logs, context) => {
+                            try {
+                                await this.processAddressLogs(logs, context, address, onTransaction);
+                            } catch (error) {
+                                console.error('处理地址交易日志时出错:', error.message);
+                            }
+                        },
+                        'confirmed'
+                    );
+                    retries = 0;
+                } catch (error) {
+                    retries++;
+                    console.error(`连接错误 (第${retries}次重试):`, error.message);
+                    
+                    if (retries < maxRetries) {
+                        await this.sleep(retryDelay * retries);
+                    } else {
+                        console.error('达到最大重试次数，停止监控');
+                        break;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('无效的地址格式:', error.message);
+        }
+    }
+
+    async processAddressLogs(logs, context, targetAddress, onTransaction) {
+        if (logs.err) {
+            return;
+        }
+
+        try {
+            const signature = logs.signature;
+            const transaction = await this.connection.getTransaction(signature, {
+                commitment: 'confirmed',
+                maxSupportedTransactionVersion: 0
+            });
+
+            if (!transaction) {
+                return;
+            }
+
+            const transactionInfo = await this.parseAddressTransaction(transaction, targetAddress);
+            
+            if (transactionInfo) {
+                await onTransaction(transactionInfo, context);
+            }
+        } catch (error) {
+            console.error('解析地址交易时出错:', error.message);
+        }
+    }
+
+    async parseAddressTransaction(transaction, targetAddress) {
+        const accountKeys = transaction.transaction.message.staticAccountKeys;
+        const targetPubkey = new PublicKey(targetAddress);
+        
+        // 检查目标地址是否参与了交易
+        const accountIndex = accountKeys.findIndex(key => key.equals(targetPubkey));
+        if (accountIndex === -1) {
+            return null;
+        }
+
+        // 解析交易类型和详情
+        const instructions = transaction.transaction.message.compiledInstructions;
+        const transactionDetails = {
+            signature: transaction.transaction.signatures[0],
+            slot: transaction.slot,
+            blockTime: transaction.blockTime,
+            fee: transaction.meta?.fee || 0,
+            status: transaction.meta?.err ? 'failed' : 'success',
+            address: targetAddress,
+            instructions: [],
+            tokenTransfers: []
+        };
+
+        // 解析指令
+        instructions.forEach((instruction, index) => {
+            const programId = accountKeys[instruction.programIdIndex];
+            transactionDetails.instructions.push({
+                programId: programId.toBase58(),
+                accounts: instruction.accountKeyIndexes.map(idx => accountKeys[idx].toBase58()),
+                data: instruction.data
+            });
+        });
+
+        // 解析代币转账（如果有）
+        if (transaction.meta?.preTokenBalances && transaction.meta?.postTokenBalances) {
+            const preBalances = transaction.meta.preTokenBalances;
+            const postBalances = transaction.meta.postTokenBalances;
+            
+            const balanceMap = new Map();
+            preBalances.forEach(balance => {
+                if (balance.owner === targetAddress) {
+                    const key = `${balance.accountIndex}-${balance.mint}`;
+                    balanceMap.set(key, { pre: balance, post: null });
+                }
+            });
+
+            postBalances.forEach(balance => {
+                if (balance.owner === targetAddress) {
+                    const key = `${balance.accountIndex}-${balance.mint}`;
+                    if (balanceMap.has(key)) {
+                        balanceMap.get(key).post = balance;
+                    } else {
+                        balanceMap.set(key, { pre: null, post: balance });
+                    }
+                }
+            });
+
+            for (const [, { pre, post }] of balanceMap) {
+                const mint = pre?.mint || post?.mint;
+                const preAmount = pre ? BigInt(pre.uiTokenAmount.amount) : 0n;
+                const postAmount = post ? BigInt(post.uiTokenAmount.amount) : 0n;
+                const difference = postAmount - preAmount;
+
+                if (difference !== 0n) {
+                    transactionDetails.tokenTransfers.push({
+                        mint: mint,
+                        amount: difference.toString(),
+                        decimals: pre?.uiTokenAmount.decimals || post?.uiTokenAmount.decimals || 0,
+                        type: difference > 0 ? 'receive' : 'send'
+                    });
+                }
+            }
+        }
+
+        return transactionDetails;
+    }
+
+    defaultTransactionHandler(transaction) {
+        const timestamp = transaction.blockTime ? 
+            new Date(transaction.blockTime * 1000).toLocaleString() : 
+            '未知时间';
+        
+        console.log(`
+=== 地址交易事件 ===
+时间: ${timestamp}
+地址: ${transaction.address}
+交易签名: ${transaction.signature}
+状态: ${transaction.status}
+手续费: ${transaction.fee / 1000000000} SOL
+指令数量: ${transaction.instructions.length}
+代币转账: ${transaction.tokenTransfers.length}
+区块: ${transaction.slot}
+==================`);
+
+        // 显示代币转账详情
+        if (transaction.tokenTransfers.length > 0) {
+            console.log('\n代币转账详情:');
+            transaction.tokenTransfers.forEach((transfer, index) => {
+                const amount = Math.abs(parseFloat(transfer.amount) / Math.pow(10, transfer.decimals));
+                const type = transfer.type === 'receive' ? '接收' : '发送';
+                console.log(`${index + 1}. ${type} ${amount} (${transfer.mint})`);
+            });
+        }
+    }
+
     stop() {
         console.log('停止监控...');
         this.isMonitoring = false;
@@ -186,10 +363,28 @@ if (require.main === module) {
     const monitorTokens = process.env.MONITOR_TOKENS ? 
         process.env.MONITOR_TOKENS.split(',').map(token => token.trim()) : 
         [];
+    const monitorAddresses = process.env.MONITOR_ADDRESSES ? 
+        process.env.MONITOR_ADDRESSES.split(',').map(addr => addr.trim()) : 
+        [];
     
-    if (tokenMint) {
+    // 检查是否使用 --address 参数
+    const addressFlag = args.indexOf('--address');
+    if (addressFlag !== -1 && args[addressFlag + 1]) {
+        const address = args[addressFlag + 1];
+        console.log(`监控指定地址: ${address}`);
+        monitor.monitorAddressTransactions(address);
+    } else if (tokenMint) {
         console.log(`监控指定代币: ${tokenMint}`);
         monitor.monitorSpecificToken(tokenMint);
+    } else if (monitorAddresses.length > 0) {
+        console.log(`监控配置的地址: ${monitorAddresses.join(', ')}`);
+        // 为每个地址启动监控
+        monitorAddresses.forEach(address => {
+            monitor.monitorAddressTransactions(address, (transaction) => {
+                console.log(`地址 ${address} 检测到交易:`);
+                monitor.defaultTransactionHandler(transaction);
+            });
+        });
     } else if (monitorAllTokens) {
         console.log('监控所有代币转账');
         monitor.monitorAllTokens();
@@ -203,7 +398,10 @@ if (require.main === module) {
             });
         });
     } else {
-        console.log('请在.env文件中配置MONITOR_TOKENS或设置MONITOR_ALL_TOKENS=true');
+        console.log('请在.env文件中配置MONITOR_TOKENS、MONITOR_ADDRESSES或设置MONITOR_ALL_TOKENS=true');
+        console.log('或使用命令行参数：');
+        console.log('  监控代币：npm run monitor [TOKEN_MINT]');
+        console.log('  监控地址：npm run monitor --address [WALLET_ADDRESS]');
         process.exit(1);
     }
     
